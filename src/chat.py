@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """
-Módulo de Chat Interativo RAG
+CLI de Chat RAG para interação com usuário
 
-Funções importáveis:
-- chat_loop(): Loop principal do chat
-- ask_question(): Processa uma pergunta
+Uso:
+  python src/chat.py
 """
 
 import os
@@ -15,29 +14,23 @@ load_dotenv()
 
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_postgres import PGVector
-from rich.console import Console
-from rich.panel import Panel
-from rich.markdown import Markdown
-from rich.prompt import Prompt
 
-console = Console()
-
-COLLECTION_NAME = os.getenv("COLLECTION_NAME", "campos_altos_edital_2025")
+COLLECTION_NAME = os.getenv("COLLECTION_NAME", "default")
 SEARCH_K = int(os.getenv("SEARCH_K", "10"))
-LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.5-flash")
-LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "1.0"))
+LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.5-flash-lite")  # Modelo obrigatório
 
-POSTGRES_USER = os.getenv("POSTGRES_USER", "desafio_user")
-POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "desafio_password")
+POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
-POSTGRES_DB = os.getenv("POSTGRES_DB", "desafio_db")
+POSTGRES_DB = os.getenv("POSTGRES_DB", "postgres")
 
 CONNECTION_STRING = (
     f"postgresql+psycopg://{POSTGRES_USER}:{POSTGRES_PASSWORD}"
     f"@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
 )
 
+# Prompt OBRIGATÓRIO conforme requisitos
 RAG_PROMPT_TEMPLATE = """CONTEXTO:
 {contexto}
 
@@ -66,30 +59,35 @@ RESPONDA A "PERGUNTA DO USUÁRIO"
 
 
 def get_llm():
-    """Retorna instância de LLM configurada."""
+    """Retorna instância de LLM configurada (modelo obrigatório)."""
     api_key = os.getenv("GOOGLE_API_KEY")
     
     if not api_key:
         raise ValueError("GOOGLE_API_KEY não definida")
     
     return ChatGoogleGenerativeAI(
-        model=LLM_MODEL,
+        model=LLM_MODEL,  # gemini-2.5-flash-lite (obrigatório)
         google_api_key=api_key,
-        temperature=LLM_TEMPERATURE,
+        temperature=1.0,
         max_retries=3,
         timeout=60,
     )
 
 
-def get_vectorstore():
-    """Retorna instância do vectorstore configurada."""
+def get_embeddings():
+    """Retorna instância de embeddings configurada."""
     api_key = os.getenv("GOOGLE_API_KEY")
     
-    embeddings = GoogleGenerativeAIEmbeddings(
-        model="models/gemini-embedding-001",
+    return GoogleGenerativeAIEmbeddings(
+        model="models/embedding-001",
         google_api_key=api_key,
         task_type="RETRIEVAL_QUERY",
     )
+
+
+def get_vectorstore():
+    """Retorna instância do vectorstore configurado."""
+    embeddings = get_embeddings()
     
     return PGVector(
         embeddings=embeddings,
@@ -100,7 +98,7 @@ def get_vectorstore():
 
 
 def format_context(results):
-    """Formata resultados para o prompt."""
+    """Formata resultados para o prompt (resultados concatenados)."""
     contexts = []
     
     for i, (doc, score) in enumerate(results, 1):
@@ -113,80 +111,68 @@ def format_context(results):
 
 def ask_question(pergunta: str):
     """
-    Processa pergunta e retorna resposta.
+    Processa pergunta do usuário.
     
-    Args:
-        pergunta: Pergunta do usuário
-        
-    Returns:
-        Tupla (resposta, resultados)
+    Passos:
+    1. Vetorizar a pergunta
+    2. Buscar os 10 resultados mais relevantes (k=10)
+    3. Montar o prompt e chamar a LLM
+    4. Retornar a resposta ao usuário
     """
     vectorstore = get_vectorstore()
+    
+    # 1. Vetorizar e buscar (Requisito: k=10)
     results = vectorstore.similarity_search_with_score(pergunta, k=SEARCH_K)
     
     if not results:
         return "Não tenho informações necessárias para responder sua pergunta.", results
     
+    # 2. Montar o prompt
     contexto = format_context(results)
     prompt = RAG_PROMPT_TEMPLATE.format(contexto=contexto, pergunta=pergunta)
     
+    # 3. Chamar a LLM
     llm = get_llm()
     resposta = llm.invoke(prompt)
     
     return resposta.content, results
 
 
-def chat_loop(max_history: int = 10):
-    """
-    Loop principal do chat interativo.
+def main():
+    """Loop principal do chat."""
+    print("╔══════════════════════════════════════════════════════════════╗")
+    print("║              CLI DE BUSCA SEMÂNTICA - RAG                     ║")
+    print("║              LangChain + PostgreSQL + pgVector                 ║")
+    print("╚══════════════════════════════════════════════════════════════╝")
+    print()
+    print("💡 Digite sua pergunta abaixo:")
+    print("⚠️  Pressione Ctrl+C para sair")
+    print()
     
-    Args:
-        max_history: Número máximo de mensagens no histórico
-    """
-    history = []
-    
-    while True:
-        try:
-            pergunta = Prompt.ask("\n[bold blue]Faça sua pergunta[/bold blue]")
+    try:
+        while True:
+            pergunta = input("PERGUNTA: ").strip()
             
-            if pergunta.lower() in ['sair', 'exit', 'quit', '']:
+            if not pergunta:
+                continue
+            
+            if pergunta.lower() in ['sair', 'exit', 'quit']:
                 break
             
-            console.print(f"\n[cyan]Pergunta:[/cyan] {pergunta}\n")
-            
+            # Processar pergunta
             resposta, results = ask_question(pergunta)
             
-            resposta_panel = Panel(
-                Markdown(resposta),
-                title="[bold green]RESPOSTA[/bold green]",
-                border_style="green",
-                padding=(1, 2)
-            )
-            console.print(resposta_panel)
+            # Exibir resposta
+            print(f"RESPOSTA: {resposta}")
+            print()
             
-            console.print(f"\n[dim]Baseado em {len(results)} contextos[/dim]")
-            
-            history.append({"pergunta": pergunta, "resposta": resposta})
-            if len(history) > max_history:
-                history.pop(0)
-            
-        except KeyboardInterrupt:
-            break
-        except Exception as e:
-            console.print(f"\n[red]ERRO: {e}[/red]")
-            continue
+    except KeyboardInterrupt:
+        print("\n\n⚠️  Saindo...")
+        sys.exit(0)
+    except Exception as e:
+        print(f"\n❌ ERRO: {e}\n")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    try:
-        console.print("\n[bold cyan]╔═════════════════════════════════════════════════╗[/bold cyan]")
-        console.print("[bold cyan]║  CLI INTERATIVO - BUSCA SEMÂNTICA RAG         ║[/bold cyan]")
-        console.print("[bold cyan]╚═════════════════════════════════════════════════╝[/bold cyan]\n")
-        console.print("[yellow]Digite 'sair' ou 'exit' para encerrar.[/yellow]\n")
-        
-        chat_loop()
-        
-        console.print("\n[yellow]Encerrando...[/yellow]\n")
-        
-    except KeyboardInterrupt:
-        console.print("\n\n[yellow]Encerrando (Ctrl+C)...[/yellow]\n")
+    main()

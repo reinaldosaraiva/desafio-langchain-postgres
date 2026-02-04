@@ -1,38 +1,35 @@
-# Desafio MBA Engenharia de Software com IA - Full Cycle
-## Ingestão e Busca Semântica com LangChain, PostgreSQL e pgVector
+# Ingestão e Busca Semântica com LangChain e PostgreSQL
 
-Este projeto implementa um sistema RAG (Retrieval-Augmented Generation) para responder perguntas sobre documentos PDF utilizando busca semântica vetorial.
+## Objetivo
 
-### Tecnologias
+Você deve entregar um software capaz de:
 
-- **Python 3.9+**
-- **LangChain** - Framework para aplicações LLM
-- **LangChain Postgres** - Vector store com pgVector
-- **Google Gemini** - Embeddings e LLM
-- **PostgreSQL + pgVector** - Banco de dados vetorial
+**Ingestão:** Ler um arquivo PDF e salvar suas informações em um banco de dados PostgreSQL com extensão pgVector.
 
-### Pré-requisitos
+**Busca:** Permitir que o usuário faça perguntas via linha de comando (CLI) e receba respostas baseadas apenas no conteúdo do PDF.
 
-- Docker e Docker Compose
-- Python 3.9 ou superior
-- API Key do Google Gemini ([obter aqui](https://ai.google.dev/gemini-api/docs/api-key))
+## Tecnologias Obrigatórias
 
-### Instalação
+- **Linguagem:** Python
+- **Framework:** LangChain
+- **Banco de dados:** PostgreSQL + pgVector
+- **Execução do banco de dados:** Docker & Docker Compose
+
+## Instalação
 
 1. Clone do repositório
-2. Copie o PDF para `document.pdf`
-3. Configure o `.env`:
+2. Configure o `.env`:
 ```bash
 cp .env.example .env
 # Edite .env e adicione sua GOOGLE_API_KEY
 ```
 
-4. Suba o banco de dados:
+3. Suba o banco de dados:
 ```bash
 docker compose up -d
 ```
 
-5. Crie e ative o ambiente virtual:
+4. Crie e ative o ambiente virtual:
 ```bash
 python3 -m venv venv
 source venv/bin/activate  # Linux/Mac
@@ -40,143 +37,132 @@ source venv/bin/activate  # Linux/Mac
 venv\Scripts\activate  # Windows
 ```
 
-6. Instale as dependências:
+5. Instale as dependências:
 ```bash
 pip install -r requirements.txt
 ```
 
-### Uso da CLI
+## Ordem de Execução
 
-Execute:
+### 1. Subir o banco de dados
 
 ```bash
-python main.py --help
+docker compose up -d
 ```
 
-#### Comandos Disponíveis
+### 2. Executar ingestão do PDF
 
-**1. Ingestão de PDF**
 ```bash
-python main.py ingest document.pdf
+python src/ingest.py
 ```
 
-**2. Busca Semântica**
+### 3. Rodar o chat
+
 ```bash
-python main.py search "Qual o valor estimado da contratação?"
+python src/chat.py
 ```
 
-**3. Chat Interativo**
-```bash
-python main.py chat
+## Exemplo no CLI
+
+### Pergunta no Contexto
+
+```
+Faça sua pergunta:
+
+PERGUNTA: Qual o valor estimado da contratação?
+RESPOSTA: O valor estimado da contratação é R$175.414,67 (Cento e setenta e cinco mil, quatrocentos e quatorze reais e sessenta e sete centavos).
 ```
 
-Digite 'sair' ou 'exit' para encerrar.
+### Pergunta Fora do Contexto
 
-**4. Informações do Vectorstore**
-```bash
-python main.py info
+```
+Faça sua pergunta:
+
+PERGUNTA: Qual é a capital da França?
+RESPOSTA: Não tenho informações necessárias para responder sua pergunta.
 ```
 
-### Exemplos de Uso
+## Pacotes Utilizados
 
-#### Exemplo 1: Ingestão
-```bash
-$ python main.py ingest document.pdf
+```python
+# Split
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-╔═══════════════════════╗
-║  INGESTÃO DE PDF        ║
-╚═══════════════════════╝
+# Embeddings (Gemini)
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
-Arquivo: document.pdf
+# PDF
+from langchain_community.document_loaders import PyPDFLoader
 
-Carregando PDF...
-Dividindo documentos...
-Inicializando vectorstore...
-Ingestando chunks...
+# Ingestão
+from langchain_postgres import PGVector
 
-✓ 287 chunks ingeridos com sucesso!
+# Busca
+similarity_search_with_score(query, k=10)
 ```
 
-#### Exemplo 2: Busca
-```bash
-$ python main.py search "Qual o valor estimado?"
+## Requisitos Atendidos
 
-╔═════════════════════╗
-║  BUSCA SEMÂNTICA       ║
-╚═════════════════════╝
+### 1. Ingestão do PDF
 
-Query: Qual o valor estimado?
+✅ **PDF dividido em chunks de 1000 caracteres com overlap de 150.**
+✅ **Cada chunk convertido em embedding (modelos/embedding-001).**
+✅ **Vetores armazenados no banco de dados PostgreSQL com pgVector.**
 
-┏━━━┳━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ # ┃ Página ┃ Conteúdo                            ┃
-┡━━━╇━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ 1 │ 1      │ R$175.414,67 (Cento e setenta e cinco... │
-│ 2 │ 3      │ VALOR ESTIMADO DA CONTRATAÇÃO R$175...  │
-└───┴────────┴────────┴──────────────────────────────────┘
+### 2. Consulta via CLI
 
-Total: 10 resultados
-```
+✅ **Script Python para simular um chat no terminal.**
 
-#### Exemplo 3: Chat
-```bash
-$ python main.py chat
+**Passos ao receber uma pergunta:**
+1. ✅ Vetorizar a pergunta.
+2. ✅ Buscar os 10 resultados mais relevantes (k=10) no banco vetorial.
+3. ✅ Montar o prompt e chamar a LLM (gemini-2.5-flash-lite).
+4. ✅ Retornar a resposta ao usuário.
 
-╔═════════════════════╗
-║  CHAT INTERATIVO       ║
-╚═════════════════════╝
-
-Digite 'sair' ou 'exit' para encerrar.
-
-Faça sua pergunta: Qual o valor estimado da contratação?
-
-Pergunta: Qual o valor estimado da contratação?
-
-┌──────────────────────────────────────────┐
-│          RESPOSTA                      │
-├──────────────────────────────────────────┤
-│ O valor estimado da contratação é     │
-│ R$175.414,67 (Cento e setenta e    │
-│ cinco mil, quatrocentos e quatorze    │
-│ reais e sessenta e sete centavos).    │
-└──────────────────────────────────────────┘
-
-Baseado em 10 contextos
-```
-
-### Casos de Teste
-
-1. **Valor da contratação:** `python main.py search "Qual o valor estimado da contratação?"`
-2. **Número do processo:** `python main.py search "Qual o número do processo licitatório?"`
-3. **Fora do contexto:** `python main.py search "Qual é a capital da França?"`
-4. **Opinião:** `python main.py search "Você acha esse edital bom ou ruim?"`
-
-### Estrutura do Projeto
+## Estrutura do Projeto
 
 ```
 desafio-langchain-postgres/
 ├── docker-compose.yml      # PostgreSQL + pgVector
-├── requirements.txt        # Dependências Python
-├── .env.example          # Template de configuração
-├── .gitignore
-├── README.md             # Este arquivo
-├── main.py              # CLI principal (sem Typer, compatível)
-├── document.pdf          # PDF indexado (Edital Campos Altos)
-└── src/
-    ├── ingest.py         # Módulo de ingestão
-    ├── search.py         # Módulo de busca
-    └── chat.py          # Módulo de chat
+├── requirements.txt        # Dependências
+├── .env.example          # Template da variável GOOGLE_API_KEY
+├── src/
+│   ├── ingest.py         # Script de ingestão do PDF
+│   ├── search.py         # Script de busca
+│   ├── chat.py           # CLI para interação com usuário
+├── document.pdf          # PDF para ingestão
+└── README.md             # Instruções de execução
 ```
 
-### Configurações
+## Prompt Utilizado
 
-| Variável | Padrão | Descrição |
-|----------|---------|-----------|
-| `CHUNK_SIZE` | 1000 | Tamanho do chunk em caracteres |
-| `CHUNK_OVERLAP` | 150 | Sobreposição entre chunks |
-| `SEARCH_K` | 10 | Número de resultados a buscar |
-| `LLM_MODEL` | gemini-2.5-flash | Modelo de linguagem |
-| `POSTGRES_PORT` | 5433 | Porta do PostgreSQL (evita conflito) |
+```plaintext
+CONTEXTO:
+{resultados concatenados do banco de dados}
 
-### Licença
+REGRAS:
+- Responda somente com base no CONTEXTO.
+- Se a informação não estiver explicitamente no CONTEXTO, responda:
+  "Não tenho informações necessárias para responder sua pergunta."
+- Nunca invente ou use conhecimento externo.
+- Nunca produza opiniões ou interpretações além do que está escrito.
+
+EXEMPLOS DE PERGUNTAS FORA DO CONTEXTO:
+Pergunta: "Qual é a capital da França?"
+Resposta: "Não tenho informações necessárias para responder sua pergunta."
+
+Pergunta: "Quantos clientes temos em 2024?"
+Resposta: "Não tenho informações necessárias para responder sua pergunta."
+
+Pergunta: "Você acha isso bom ou ruim?"
+Resposta: "Não tenho informações necessárias para responder sua pergunta."
+
+PERGUNTA DO USUÁRIO:
+{pergunta do usuário}
+
+RESPONDA A "PERGUNTA DO USUÁRIO"
+```
+
+## Licença
 
 Este projeto é entregue como atividade acadêmica do MBA em Engenharia de Software com IA da Full Cycle.

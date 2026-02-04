@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """
-Módulo de Ingestão de PDF para Vector Store
+Script de ingestão do PDF para Vector Store PostgreSQL + pgVector
 
-Funções importáveis:
-- ingest_pdf(): Função principal de ingestão
-- get_vectorstore(): Retorna instância do vectorstore
-- clear_collection(): Remove coleção do banco
+Uso:
+  python src/ingest.py
 """
 
 import os
@@ -19,18 +17,14 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_postgres import PGVector
-from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn
 
-console = Console()
+COLLECTION_NAME = os.getenv("COLLECTION_NAME", "default")
 
-COLLECTION_NAME = os.getenv("COLLECTION_NAME", "campos_altos_edital_2025")
-
-POSTGRES_USER = os.getenv("POSTGRES_USER", "desafio_user")
-POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "desafio_password")
+POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
-POSTGRES_DB = os.getenv("POSTGRES_DB", "desafio_db")
+POSTGRES_DB = os.getenv("POSTGRES_DB", "postgres")
 
 CONNECTION_STRING = (
     f"postgresql+psycopg://{POSTGRES_USER}:{POSTGRES_PASSWORD}"
@@ -38,44 +32,60 @@ CONNECTION_STRING = (
 )
 
 
-def load_pdf(file_path: str):
-    """Carrega PDF e retorna documentos."""
-    if not Path(file_path).exists():
-        console.print(f"[red]ERRO: Arquivo não encontrado: {file_path}[/red]")
-        raise FileNotFoundError(f"Arquivo não encontrado: {file_path}")
-    
-    loader = PyPDFLoader(file_path)
-    return loader.load()
-
-
-def split_documents(documents, chunk_size: int, chunk_overlap: int):
-    """Divide documentos em chunks."""
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-        separators=["\n\n", "\n", " ", ""],
-        length_function=len,
-    )
-    
-    return text_splitter.split_documents(documents)
-
-
 def get_embeddings():
-    """Retorna instância de embeddings configurada."""
+    """Retorna instância de embeddings configurada (modelo obrigatório)."""
     api_key = os.getenv("GOOGLE_API_KEY")
     
     if not api_key:
         raise ValueError("GOOGLE_API_KEY não definida no .env")
     
     return GoogleGenerativeAIEmbeddings(
-        model="models/gemini-embedding-001",
+        model="models/embedding-001",  # Modelo obrigatório
         google_api_key=api_key,
         task_type="RETRIEVAL_DOCUMENT",
     )
 
 
-def get_vectorstore():
-    """Retorna instância do vectorstore configurado."""
+def ingest_pdf(
+    pdf_path: str = "document.pdf",
+    chunk_size: int = 1000,
+    chunk_overlap: int = 150,
+):
+    """
+    Função principal de ingestão.
+    
+    Requisitos:
+    - Chunks de 1000 caracteres
+    - Overlap de 150 caracteres
+    - Cada chunk convertido em embedding
+    - Vetores armazenados no PostgreSQL + pgVector
+    """
+    print("╔══════════════════════════════════════════════════════════════╗")
+    print("║           INGESTÃO DO PDF PARA VECTOR STORE                   ║")
+    print("╚══════════════════════════════════════════════════════════════╝")
+    print()
+    
+    # 1. Carregar PDF
+    print(f"📄 Carregando PDF: {pdf_path}")
+    loader = PyPDFLoader(pdf_path)
+    documents = loader.load()
+    print(f"✓ PDF carregado: {len(documents)} páginas")
+    print()
+    
+    # 2. Dividir em chunks (Requisito: 1000 chars, 150 overlap)
+    print("✂️  Dividindo documentos em chunks...")
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        separators=["\n\n", "\n", " ", ""],
+        length_function=len,
+    )
+    chunks = text_splitter.split_documents(documents)
+    print(f"✓ Chunks gerados: {len(chunks)} (size: {chunk_size}, overlap: {chunk_overlap})")
+    print()
+    
+    # 3. Inicializar vectorstore
+    print("💾 Inicializando Vector Store (PostgreSQL + pgVector)...")
     embeddings = get_embeddings()
     
     vectorstore = PGVector(
@@ -84,75 +94,14 @@ def get_vectorstore():
         collection_name=COLLECTION_NAME,
         use_jsonb=True,
     )
+    print("✓ Vector Store inicializado")
+    print()
     
-    return vectorstore
-
-
-def clear_collection(vectorstore: PGVector):
-    """Remove coleção do vectorstore."""
-    # Deletar todos os documentos da coleção
-    conn = vectorstore.conn
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute("DELETE FROM langchain_pg_embedding WHERE collection_id = %s", 
-                     (vectorstore._collection_uuid,))
-        conn.commit()
-    finally:
-        cursor.close()
-
-
-def ingest_pdf(
-    pdf_path: str = "document.pdf",
-    chunk_size: int = 1000,
-    chunk_overlap: int = 150,
-) -> int:
-    """
-    Função principal de ingestão.
-    
-    Args:
-        pdf_path: Caminho para o PDF
-        chunk_size: Tamanho do chunk em caracteres
-        chunk_overlap: Sobreposição entre chunks
-        
-    Returns:
-        Número de chunks ingeridos
-    """
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Carregando PDF...", total=None)
-        documents = load_pdf(pdf_path)
-        progress.update(task, completed=True)
-    
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Dividindo documentos...", total=None)
-        chunks = split_documents(documents, chunk_size, chunk_overlap)
-        progress.update(task, completed=True)
-    
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Inicializando vectorstore...", total=None)
-        vectorstore = get_vectorstore()
-        progress.update(task, completed=True)
-    
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Ingestando chunks...", total=None)
-        ids = vectorstore.add_documents(chunks)
-        progress.update(task, completed=True)
+    # 4. Ingestar chunks (converte cada chunk em embedding)
+    print("📊 Ingestando chunks e gerando embeddings...")
+    ids = vectorstore.add_documents(chunks)
+    print(f"✓ {len(ids)} chunks ingeridos com embeddings gerados")
+    print()
     
     return len(ids)
 
@@ -160,7 +109,10 @@ def ingest_pdf(
 if __name__ == "__main__":
     try:
         num_ingested = ingest_pdf()
-        console.print(f"\n[bold green]✓ {num_ingested} chunks ingeridos![/bold green]\n")
+        print("╔══════════════════════════════════════════════════════════════╗")
+        print(f"║           INGESTÃO CONCLUÍDA: {num_ingested} CHUNKS             ║")
+        print("╚══════════════════════════════════════════════════════════════╝")
+        print()
     except Exception as e:
-        console.print(f"\n[red]ERRO: {e}[/red]\n")
+        print(f"\n❌ ERRO: {e}\n")
         sys.exit(1)
